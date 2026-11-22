@@ -17,6 +17,14 @@ C# / .NET 8 Web API with PostgreSQL and EF Core (Npgsql).
    dotnet run
    ```
 
+Set the JWT signing key (not stored in the repo; must be at least 32 characters):
+
+   ```bash
+   dotnet user-secrets set "Jwt:Key" "$(openssl rand -base64 48)"
+   ```
+
+   In other environments, supply it as the `Jwt__Key` environment variable.
+
 The connection string is in `appsettings.json` (`ConnectionStrings:DefaultConnection`).
 
 ## Database

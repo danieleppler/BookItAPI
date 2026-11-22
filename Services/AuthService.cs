@@ -7,6 +7,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 
 namespace BookIt.Api.Services;
 
@@ -67,7 +68,7 @@ public class AuthService : IAuthService
             Email = email,
             FullName = request.FullName.Trim(),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            Role = request.Role,
+            Role = UserRole.Client, // never client-controlled; elevated only via admin flow
         };
 
         _db.Users.Add(user);
@@ -76,9 +77,14 @@ public class AuthService : IAuthService
         {
             await _db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
         {
-            // Unique index violation from a concurrent registration with the same email
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_Users_Email",
+        })
+        {
+            // Concurrent registration with the same email won the race.
+            // Any other DB failure (connection, timeout, other constraint) propagates as a 500.
             return null;
         }
 

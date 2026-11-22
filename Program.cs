@@ -13,10 +13,16 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IBusinessService, BusinessService>();
 
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
 var jwt = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
     ?? throw new InvalidOperationException("Missing Jwt configuration section");
+if (string.IsNullOrWhiteSpace(jwt.Key) || jwt.Key.Length < 32)
+{
+    throw new InvalidOperationException(
+        "Jwt:Key is missing or shorter than 32 characters. Set it via user-secrets (dev) or the Jwt__Key environment variable.");
+}
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o => o.TokenValidationParameters = new TokenValidationParameters
     {

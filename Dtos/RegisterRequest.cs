@@ -1,5 +1,4 @@
 using System.ComponentModel.DataAnnotations;
-using BookIt.Api.Entities;
 
 namespace BookIt.Api.Dtos;
 
@@ -13,7 +12,4 @@ public class RegisterRequest
 
     [Required, MaxLength(200)]
     public string FullName { get; set; } = string.Empty;
-
-    [EnumDataType(typeof(UserRole))]
-    public UserRole Role { get; set; }
 }
