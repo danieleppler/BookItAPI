@@ -8,5 +8,9 @@ public class JwtSettings
     public string Audience { get; set; } = string.Empty;
     /// <summary>HMAC signing key, at least 32 characters. Override outside development.</summary>
     public string Key { get; set; } = string.Empty;
-    public int ExpiryMinutes { get; set; } = 60;
+    /// <summary>Access token (JWT) lifetime. Short, because a JWT can't be revoked before it expires.</summary>
+    public int AccessTokenMinutes { get; set; } = 15;
+
+    /// <summary>Refresh token lifetime. Revocable (stored in the DB), and each refresh issues a new one.</summary>
+    public int RefreshTokenDays { get; set; } = 7;
 }

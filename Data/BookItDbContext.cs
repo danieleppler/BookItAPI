@@ -13,6 +13,7 @@ public class BookItDbContext : DbContext
     public DbSet<Business> Businesses => Set<Business>();
     public DbSet<Service> Services => Set<Service>();
     public DbSet<Appointment> Appointments => Set<Appointment>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -65,6 +66,17 @@ public class BookItDbContext : DbContext
                 .WithMany(u => u.Appointments)
                 .HasForeignKey(a => a.ClientId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<RefreshToken>(e =>
+        {
+            e.Property(t => t.TokenHash).IsRequired().HasMaxLength(64); // SHA-256 as hex
+            e.HasIndex(t => t.TokenHash).IsUnique(); // lookup on every refresh
+            e.HasIndex(t => t.FamilyId); // revoke a whole family on reuse
+            e.HasOne(t => t.User)
+                .WithMany()
+                .HasForeignKey(t => t.UserId)
+                .OnDelete(DeleteBehavior.Cascade); // a user's sessions die with the user
         });
     }
 }

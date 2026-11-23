@@ -1,7 +1,10 @@
 using BookIt.Api.Data;
 using BookIt.Api.Middleware;
 using System.Text;
+using System.Threading.RateLimiting;
+using BookIt.Api.Controllers;
 using BookIt.Api.Services;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -39,6 +42,41 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         NameClaimType = "sub",
     });
 builder.Services.AddAuthorization();
+
+// Login brute-force protection: 5 attempts per minute per client IP.
+// Sliding window (6 × 10s segments) so a burst can't straddle a window boundary and get 2× the limit.
+var loginWindow = TimeSpan.FromMinutes(1);
+const int loginSegments = 6;
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy(AuthController.LoginRateLimitPolicy, context =>
+        RateLimitPartition.GetSlidingWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = loginWindow,
+                SegmentsPerWindow = loginSegments,
+                QueueLimit = 0, // reject immediately instead of holding requests open
+            }));
+
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, ct) =>
+    {
+        // The sliding window limiter doesn't report a retry time, so fall back to one segment:
+        // the earliest moment old attempts can slide out of the window and free a slot
+        var retryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var reported)
+            ? reported
+            : loginWindow / loginSegments;
+        context.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+
+        await context.HttpContext.Response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Status = StatusCodes.Status429TooManyRequests,
+            Title = "Too many login attempts. Try again later.",
+        }, options: (System.Text.Json.JsonSerializerOptions?)null, contentType: "application/problem+json", cancellationToken: ct);
+    };
+});
 builder.Services.AddDbContext<BookItDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -68,6 +106,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// After the logging/exception middlewares, so 429s are logged with a correlation ID
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

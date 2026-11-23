@@ -11,19 +11,19 @@ C# / .NET 8 Web API with PostgreSQL and EF Core (Npgsql).
      -p 5432:5432 -d postgres:16
    ```
 
-2. Run the API (migrations are applied and sample data is seeded automatically on startup):
-
-   ```bash
-   dotnet run
-   ```
-
-Set the JWT signing key (not stored in the repo; must be at least 32 characters):
+2. Set the JWT signing key (not stored in the repo; must be at least 32 characters, or the API refuses to start):
 
    ```bash
    dotnet user-secrets set "Jwt:Key" "$(openssl rand -base64 48)"
    ```
 
    In other environments, supply it as the `Jwt__Key` environment variable.
+
+3. Run the API (migrations are applied and sample data is seeded automatically on startup):
+
+   ```bash
+   dotnet run
+   ```
 
 The connection string is in `appsettings.json` (`ConnectionStrings:DefaultConnection`).
 
@@ -45,3 +45,7 @@ All seeded users share the password `Password123!`.
 |---------------|--------------------------------------------|
 | BusinessOwner | owner1@bookit.com … owner4@bookit.com      |
 | Client        | client1@bookit.com … client6@bookit.com    |
+
+## DI lifetimes
+
+The `DbContext` is **scoped** (the `AddDbContext` default): one instance per HTTP request, because it isn't thread-safe and its change tracker should only hold that request's entities. The services (`IAuthService`, `IBusinessService`, `IAppointmentService`) are also **scoped**, because they depend on the `DbContext`. A singleton would capture one context and share it across concurrent requests, and a transient would work but adds nothing, since the request already shares one context.
