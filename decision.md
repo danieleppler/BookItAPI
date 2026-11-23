@@ -116,3 +116,71 @@ A log of design decisions for the BookIt API, with the reasoning behind each.
 - **No pagination yet.** The result is unbounded; fine for seed data, but an owner with many businesses could get a large response. The fix is the same envelope as `/api/businesses`, or a default/maximum date window.
 - The owner path joins through `Services` → `Businesses`; the FK indexes on `Services.BusinessId` and `Businesses.OwnerId` (added by EF convention) cover it. The client path uses `IX_Appointments_ClientId`.
 - Times with a `+hh:mm` offset must be URL-encoded (`%2B`) in the query string, or use `Z`.
+
+---
+
+## 5. Business summary: owner-only, aggregated in the database, one row per service
+
+**Date:** 2026-11-23
+
+**Decision:**
+- `GET /api/businesses/{id}/summary` requires the `BusinessOwner` role (`[Authorize(Roles = ...)]`, so a Client gets 403 from the framework). The service then checks `Business.OwnerId` against the JWT `sub`: another owner gets **403**, and a business that doesn't exist gets **404**.
+- "Upcoming" = `StartTime > now` **and** `Status != Cancelled`, so both `Pending` and `Confirmed` count, as the spec says. `Pending` still reserves the slot (see decision 3), so it counts as expected revenue.
+- Response: one entry per service (`upcomingAppointments`, `expectedRevenue = count × price`) plus business-level totals.
+- **One database round trip:** the ownership check and the aggregation come back in the same query.
+
+**Why the aggregation is written this way:**
+```csharp
+_db.Businesses.Where(b => b.Id == id)
+    .Select(b => new { b.Name, b.OwnerId,
+        Services = b.Services.Select(s => new { s.Id, s.Name, s.Price,
+            UpcomingCount = s.Appointments.Count(a => a.StartTime > now && a.Status != Cancelled) }).ToList() })
+    .SingleOrDefaultAsync();
+```
+- EF translates this into one SQL statement: the business row `LEFT JOIN`ed to its services, with the `Count(...)` as a correlated `COUNT(*)` subquery per service. The counting happens in Postgres and only one row per service comes back, not every appointment.
+- Ownership is checked in C# on the returned `OwnerId`. An earlier version used a separate ownership query first; merging them saves a round trip on every request, which matters more than the cheap counts wasted on the rare 403.
+- Starting from `Services` (not `GroupBy` on `Appointments`) means a service with **no** upcoming bookings still appears with `0`. Grouping appointments would silently drop it.
+- `count × price` and the totals are computed in C# on those few aggregated rows, using `decimal`, so money stays exact.
+- The `(ServiceId, StartTime)` index serves the subquery.
+
+**Alternatives considered:**
+- `GroupBy(a => a.ServiceId)` on appointments, then joining services: more code and drops zero-booking services unless you do a left join.
+- `Sum(a => a.Service.Price)` in SQL: same result, but "count × price" is the stated definition and keeps the count and revenue visibly consistent.
+
+**Trade-offs:**
+- Returning 404 for a missing business but 403 for someone else's business tells an owner which ids exist. Business ids aren't secret (`GET /api/businesses` lists them all), so that's acceptable.
+- Revenue uses the service's **current** price. If prices change, already-booked appointments would need a stored `PriceAtBooking` to be exact; out of scope.
+
+---
+
+## 6. Middlewares: request logging with correlation ID, and global exception handling
+
+**Date:** 2026-11-23
+
+**Decision:** two custom convention-based middleware classes in `Middleware/`, registered first in the pipeline in this order:
+
+```csharp
+app.UseMiddleware<RequestLoggingMiddleware>();     // outermost
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+```
+
+**Order:** request logging wraps the exception handler, so when a request crashes, the handler first turns it into a 500 and the logger then records that real status and the full duration. Both sit before authentication, so 401/403 responses are logged and get a correlation ID too.
+
+**`RequestLoggingMiddleware`:**
+- Logs `HTTP {Method} {Path} responded {StatusCode} in {ElapsedMs} ms [CorrelationId: ...]` once per request, in a `finally`, as structured log fields.
+- Logs the **path only, not the query string**, so user-supplied filter values don't end up in logs.
+- **Correlation ID:** reuses the caller's `X-Correlation-ID` header if it matches `^[A-Za-z0-9._-]{1,64}$`; otherwise it generates a GUID. Reusing it lets one request be traced across services. The allow-list stops a caller from injecting newlines (forged log lines) or huge values.
+- The id is stored in `HttpContext.TraceIdentifier` (the framework's per-request id), opened as a log scope, and added to the response with `Response.OnStarting(...)`. `OnStarting` callbacks survive `Response.Clear()`, so the header is present even on the 500 written by the exception handler.
+
+**`ExceptionHandlingMiddleware`:**
+- Catches any unhandled exception, logs it **in full** (`LogError(ex, ...)` with the correlation ID), and returns a generic `application/problem+json` 500: a fixed title and detail, the path, and the `correlationId`. No exception message, type or stack trace reaches the client, in any environment.
+- A client disconnect (`OperationCanceledException` while `RequestAborted` is set) is logged at Information and gets no response, since nobody is listening and it isn't a server error.
+- If the response has already started, the status can't be changed any more, so it logs and rethrows and the server aborts the connection.
+
+**Why custom classes instead of `UseExceptionHandler` / `UseHttpLogging`:** the spec asks for hand-written middleware. The built-ins would also work; `UseHttpLogging` doesn't produce correlation IDs on its own.
+
+**Verified:** 200 / 401 responses carry the header; a caller-supplied safe id is echoed back, and an unsafe one is replaced. A real failure (the test instance's DB connections terminated mid-run) returned a clean 500 body with `correlationId`, the full Npgsql stack trace appeared only in the server log, and the request log line showed `responded 500`.
+
+**Trade-offs:**
+- The console log formatter doesn't print scopes by default, so the correlation ID is also written into the two middleware log messages explicitly. To get it on *every* log line (EF, services), turn on `IncludeScopes` or use a structured logging sink.
+- Expected errors (404, 409, ...) are still returned by the controllers as ProblemDetails; this middleware only covers what nothing else handled.

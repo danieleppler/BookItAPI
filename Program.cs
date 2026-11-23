@@ -1,4 +1,5 @@
 using BookIt.Api.Data;
+using BookIt.Api.Middleware;
 using System.Text;
 using BookIt.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -55,6 +56,11 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
+// Order matters: request logging is outermost so it times every request and logs the final status code,
+// including the 500 written by the exception handler just inside it.
+app.UseMiddleware<RequestLoggingMiddleware>();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
