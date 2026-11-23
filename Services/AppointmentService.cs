@@ -74,4 +74,50 @@ public class AppointmentService : IAppointmentService
             appointment.EndTime,
             appointment.Status));
     }
+
+    public async Task<IReadOnlyList<AppointmentResponse>> GetForUserAsync(
+        int userId, UserRole role, AppointmentQuery query, CancellationToken ct = default)
+    {
+        // Ownership scoping is applied first and unconditionally, so filters can only narrow the caller's own data
+        var appointments = role switch
+        {
+            UserRole.Client => _db.Appointments.Where(a => a.ClientId == userId),
+            UserRole.BusinessOwner => _db.Appointments.Where(a => a.Service.Business.OwnerId == userId),
+            _ => throw new ArgumentOutOfRangeException(nameof(role), role, "Unsupported role"),
+        };
+
+        // Overlap semantics: anything that intersects [from, to), including appointments in progress at "from"
+        if (query.From is { } from)
+        {
+            var fromUtc = from.UtcDateTime;
+            appointments = appointments.Where(a => a.EndTime > fromUtc);
+        }
+
+        if (query.To is { } to)
+        {
+            var toUtc = to.UtcDateTime;
+            appointments = appointments.Where(a => a.StartTime < toUtc);
+        }
+
+        if (query.Status is { } status)
+        {
+            appointments = appointments.Where(a => a.Status == status);
+        }
+
+        // Projecting straight into the DTO makes EF emit a single SELECT with JOINs to Services and Businesses:
+        // no entities are materialized or tracked, and there are no per-row lazy loads (no N+1).
+        return await appointments
+            .OrderBy(a => a.StartTime)
+            .ThenBy(a => a.Id)
+            .Select(a => new AppointmentResponse(
+                a.Id,
+                a.ServiceId,
+                a.Service.Name,
+                a.Service.BusinessId,
+                a.Service.Business.Name,
+                a.StartTime,
+                a.EndTime,
+                a.Status))
+            .ToListAsync(ct);
+    }
 }

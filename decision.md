@@ -91,3 +91,28 @@ A log of design decisions for the BookIt API, with the reasoning behind each.
 - The overlap rule is per service. A business that can't run two different services at once (e.g. a single barber) would need the rule per business instead; out of scope here.
 - A client can still hold overlapping appointments at different services; not restricted.
 - The seeder marks a randomly generated slot as `Cancelled` if it would overlap an earlier active one, so seed data satisfies the constraint.
+
+---
+
+## 4. Listing appointments: scoped by the JWT, overlap-based date filter, single projected query
+
+**Date:** 2026-11-23
+
+**Decision:**
+- `GET /api/appointments?from=&to=&status=` is open to both roles. The scope comes **only from the token** (`sub` + role claim); no query parameter can widen it:
+  - `Client` → `WHERE ClientId = @me`
+  - `BusinessOwner` → `WHERE Service.Business.OwnerId = @me`
+- The scope filter is applied first; `from` / `to` / `status` can only narrow it further.
+- **Date range uses overlap semantics** on `[from, to)`: an appointment is returned if `EndTime > from AND StartTime < to`. So an appointment already in progress at `from` is included. Either bound may be omitted. `from >= to` → 400.
+- `status` binds by name (case-insensitive); an unknown value → 400.
+- Results are ordered by `StartTime`, then `Id`.
+- The response is `AppointmentResponse` (same DTO as `POST`), with `serviceName` and `businessName` for display.
+
+**Why — no N+1:** the query ends in `.Select(a => new AppointmentResponse(..., a.Service.Name, ..., a.Service.Business.Name, ...))`. EF translates the navigations into `INNER JOIN`s, so it is **one SQL round trip** no matter how many rows come back. No entities are materialized or tracked, and lazy loading is not enabled, so nothing can load related rows one by one. `Include` was not needed because a projection loads only the columns it uses.
+
+**Why overlap rather than "start time in range":** a calendar view for "today" should show a 23:30–00:30 appointment that started yesterday. Filtering on `StartTime` alone would hide it.
+
+**Trade-offs / follow-ups:**
+- **No pagination yet.** The result is unbounded; fine for seed data, but an owner with many businesses could get a large response. The fix is the same envelope as `/api/businesses`, or a default/maximum date window.
+- The owner path joins through `Services` → `Businesses`; the FK indexes on `Services.BusinessId` and `Businesses.OwnerId` (added by EF convention) cover it. The client path uses `IX_Appointments_ClientId`.
+- Times with a `+hh:mm` offset must be URL-encoded (`%2B`) in the query string, or use `Z`.

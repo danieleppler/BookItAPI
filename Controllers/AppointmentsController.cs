@@ -49,4 +49,22 @@ public class AppointmentsController : ControllerBase
             _ => throw new InvalidOperationException($"Unhandled booking error {result.Error}"),
         };
     }
+
+    [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<AppointmentResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IReadOnlyList<AppointmentResponse>>> GetMine(
+        [FromQuery] AppointmentQuery query, CancellationToken ct)
+    {
+        // Both user id and role come from the signed token, so a caller can only ever see their own scope
+        if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId) ||
+            !Enum.TryParse<UserRole>(User.FindFirstValue(ClaimTypes.Role), out var role) ||
+            !Enum.IsDefined(role))
+        {
+            return Unauthorized();
+        }
+
+        return Ok(await _appointmentService.GetForUserAsync(userId, role, query, ct));
+    }
 }
