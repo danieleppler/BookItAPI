@@ -20,6 +20,7 @@ namespace BookIt.Api.Migrations
                 .HasAnnotation("ProductVersion", "8.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "btree_gist");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("BookIt.Api.Entities.Appointment", b =>
@@ -32,6 +33,9 @@ namespace BookIt.Api.Migrations
 
                     b.Property<int>("ClientId")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime>("EndTime")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("ServiceId")
                         .HasColumnType("integer");
@@ -50,7 +54,10 @@ namespace BookIt.Api.Migrations
 
                     b.HasIndex("ServiceId", "StartTime");
 
-                    b.ToTable("Appointments");
+                    b.ToTable("Appointments", t =>
+                        {
+                            t.HasCheckConstraint("CK_Appointments_EndAfterStart", "\"EndTime\" > \"StartTime\"");
+                        });
                 });
 
             modelBuilder.Entity("BookIt.Api.Entities.Business", b =>

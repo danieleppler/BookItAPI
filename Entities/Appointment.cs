@@ -11,5 +11,9 @@ public class Appointment
     public User Client { get; set; } = null!;
 
     public DateTime StartTime { get; set; }
+
+    /// <summary>StartTime + service duration, stored so the DB can enforce no overlapping bookings.</summary>
+    public DateTime EndTime { get; set; }
+
     public AppointmentStatus Status { get; set; } = AppointmentStatus.Pending;
 }

@@ -16,6 +16,9 @@ public class BookItDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Lets a GiST index combine "=" on ServiceId with "&&" on time ranges (used by the no-overlap constraint)
+        modelBuilder.HasPostgresExtension("btree_gist");
+
         modelBuilder.Entity<User>(e =>
         {
             e.HasIndex(u => u.Email).IsUnique();
@@ -48,6 +51,9 @@ public class BookItDbContext : DbContext
 
         modelBuilder.Entity<Appointment>(e =>
         {
+            // The no-overlap exclusion constraint is created in raw SQL in the AddAppointmentEndTime migration
+            // (EF can't model exclusion constraints).
+            e.ToTable(t => t.HasCheckConstraint("CK_Appointments_EndAfterStart", "\"EndTime\" > \"StartTime\""));
             e.Property(a => a.Status).HasConversion<string>().HasMaxLength(30);
             e.HasIndex(a => a.ClientId);
             e.HasIndex(a => new { a.ServiceId, a.StartTime });

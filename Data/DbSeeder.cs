@@ -76,14 +76,35 @@ public static class DbSeeder
         var statuses = Enum.GetValues<AppointmentStatus>();
         var today = DateTime.UtcNow.Date;
 
-        // 200 appointments spread over 30 days in the past and 30 days ahead
-        var appointments = Enumerable.Range(0, 200).Select(_ => new Appointment
+        // 200 appointments spread over 30 days in the past and 30 days ahead.
+        // A random slot that overlaps an earlier active booking of the same service is seeded as Cancelled,
+        // so the data satisfies the EX_Appointments_NoOverlap constraint.
+        var appointments = new List<Appointment>();
+        for (var i = 0; i < 200; i++)
         {
-            Service = services[rng.Next(services.Count)],
-            Client = clients[rng.Next(clients.Count)],
-            StartTime = today.AddDays(rng.Next(-30, 31)).AddHours(rng.Next(9, 18)),
-            Status = statuses[rng.Next(statuses.Length)],
-        }).ToList();
+            var service = services[rng.Next(services.Count)];
+            var start = today.AddDays(rng.Next(-30, 31)).AddHours(rng.Next(9, 18));
+            var end = start.AddMinutes(service.DurationMinutes);
+            var status = statuses[rng.Next(statuses.Length)];
+
+            var overlaps = appointments.Any(a =>
+                a.Service == service &&
+                a.Status != AppointmentStatus.Cancelled &&
+                a.StartTime < end && start < a.EndTime);
+            if (overlaps)
+            {
+                status = AppointmentStatus.Cancelled;
+            }
+
+            appointments.Add(new Appointment
+            {
+                Service = service,
+                Client = clients[rng.Next(clients.Count)],
+                StartTime = start,
+                EndTime = end,
+                Status = status,
+            });
+        }
 
         db.Users.AddRange(owners);
         db.Users.AddRange(clients);
