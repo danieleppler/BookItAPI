@@ -1,0 +1,630 @@
+{
+  "info": {
+    "name": "BookIt API",
+    "description": "All BookIt endpoints, plus the main error cases (401, 403, 404, 409).\n\nHow to use:\n1. Start Postgres and the API (see README). `baseUrl` defaults to http://localhost:5094.\n2. Run the requests in order, or run the whole collection. The login and refresh requests save the tokens into collection variables, and every other request uses them automatically.\n\nNotes:\n- Login is rate-limited to 5 attempts per minute per IP. A full run makes 3 login calls, so wait a minute between full runs.\n- Booking picks a random future slot each run, so repeated runs don't collide.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{clientToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5094" },
+    { "key": "clientEmail", "value": "client1@bookit.com" },
+    { "key": "ownerEmail", "value": "owner1@bookit.com" },
+    { "key": "password", "value": "Password123!" },
+    { "key": "serviceId", "value": "1", "description": "Haircut at Barber Studio 1 (owned by owner1)" },
+    { "key": "ownedBusinessId", "value": "1", "description": "Owned by owner1" },
+    { "key": "otherOwnersBusinessId", "value": "2", "description": "Owned by owner2" },
+    { "key": "clientToken", "value": "" },
+    { "key": "ownerToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "previousRefreshToken", "value": "" },
+    { "key": "startTime", "value": "" },
+    { "key": "fromDate", "value": "" },
+    { "key": "toDate", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('New users are always Client', () => pm.expect(pm.response.json().role).to.eql('Client'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newclient{{$timestamp}}@example.com\",\n  \"password\": \"Password123!\",\n  \"fullName\": \"New Client\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "description": "Creates a user. The role is always Client (see decision.md #1)."
+          }
+        },
+        {
+          "name": "Register - email already taken (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"Password123!\",\n  \"fullName\": \"Duplicate\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] }
+          }
+        },
+        {
+          "name": "Login - client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('clientToken', body.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "description": "Saves the access token to {{clientToken}} and the refresh token to {{refreshToken}}."
+          }
+        },
+        {
+          "name": "Login - business owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('ownerToken', pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ownerEmail}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "description": "Saves the access token to {{ownerToken}}."
+          }
+        },
+        {
+          "name": "Login - wrong password (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"wrong-password\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Refresh token",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Kept so the next request can show that a used refresh token is rejected",
+                  "pm.collectionVariables.set('previousRefreshToken', pm.collectionVariables.get('refreshToken'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Refresh token is rotated', () => pm.expect(body.refreshToken).to.not.eql(pm.collectionVariables.get('previousRefreshToken')));",
+                  "pm.collectionVariables.set('clientToken', body.accessToken);",
+                  "pm.collectionVariables.set('refreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/refresh", "host": ["{{baseUrl}}"], "path": ["api", "auth", "refresh"] },
+            "description": "Exchanges the refresh token for a new access token and a new refresh token. Each refresh token works once."
+          }
+        },
+        {
+          "name": "Refresh token - reuse a used token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{previousRefreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/refresh", "host": ["{{baseUrl}}"], "path": ["api", "auth", "refresh"] },
+            "description": "Sends the token that was already used. Reuse revokes the whole login session, so the latest refresh token stops working too (log in again to get a new one). The current access token stays valid until it expires."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Businesses",
+      "item": [
+        {
+          "name": "List businesses (paginated)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Page has at most pageSize items', () => pm.expect(body.items.length).to.be.at.most(body.pageSize));",
+                  "pm.test('Includes the total count', () => pm.expect(body.totalCount).to.be.a('number'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/businesses?page=1&pageSize=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "businesses"],
+              "query": [
+                { "key": "page", "value": "1", "description": "Defaults to 1" },
+                { "key": "pageSize", "value": "10", "description": "Defaults to 20, max 100" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List businesses - filter by category and search",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Every item matches both filters', () => body.items.forEach(b => {",
+                  "  pm.expect(b.category.toLowerCase()).to.eql('barber');",
+                  "  pm.expect(b.name.toLowerCase()).to.include('studio 1');",
+                  "}));",
+                  "pm.test('Total count matches the filters', () => pm.expect(body.totalCount).to.eql(body.items.length));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/businesses?category=barber&search=studio 1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "businesses"],
+              "query": [
+                { "key": "category", "value": "barber", "description": "Exact match, case-insensitive" },
+                { "key": "search", "value": "studio 1", "description": "Name contains, case-insensitive" },
+                { "key": "page", "value": "1", "disabled": true },
+                { "key": "pageSize", "value": "20", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List businesses - no token (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/businesses", "host": ["{{baseUrl}}"], "path": ["api", "businesses"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Appointments",
+      "item": [
+        {
+          "name": "Book appointment (client)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A random whole-hour slot 60-330 days ahead, so repeated runs rarely hit an existing booking",
+                  "const days = 60 + Math.floor(Math.random() * 270);",
+                  "const start = new Date(Date.now() + days * 24 * 60 * 60 * 1000);",
+                  "start.setUTCHours(Math.floor(Math.random() * 24), 0, 0, 0);",
+                  "pm.collectionVariables.set('startTime', start.toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('New bookings are Pending', () => pm.expect(body.status).to.eql('Pending'));",
+                  "pm.test('Includes display fields', () => {",
+                  "  pm.expect(body.serviceName).to.be.a('string');",
+                  "  pm.expect(body.businessName).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": {{serviceId}},\n  \"startTime\": \"{{startTime}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/appointments", "host": ["{{baseUrl}}"], "path": ["api", "appointments"] },
+            "description": "Clients only. startTime is ISO 8601 with an offset, in the future and at most one year ahead. The pre-request script picks a random slot."
+          }
+        },
+        {
+          "name": "Book appointment - same slot again (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('409 Conflict', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": {{serviceId}},\n  \"startTime\": \"{{startTime}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/appointments", "host": ["{{baseUrl}}"], "path": ["api", "appointments"] },
+            "description": "Same service and start time as the previous request. The database's no-overlap constraint rejects it (see decision.md #3)."
+          }
+        },
+        {
+          "name": "Book appointment - start time in the past (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": {{serviceId}},\n  \"startTime\": \"2020-01-01T10:00:00Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/appointments", "host": ["{{baseUrl}}"], "path": ["api", "appointments"] }
+          }
+        },
+        {
+          "name": "Book appointment - as business owner (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{ownerToken}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceId\": {{serviceId}},\n  \"startTime\": \"{{startTime}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/appointments", "host": ["{{baseUrl}}"], "path": ["api", "appointments"] }
+          }
+        },
+        {
+          "name": "My appointments - client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns a list', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/appointments", "host": ["{{baseUrl}}"], "path": ["api", "appointments"] },
+            "description": "Only the calling client's own appointments."
+          }
+        },
+        {
+          "name": "My appointments - client, filtered by date range and status",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const day = 24 * 60 * 60 * 1000;",
+                  "pm.collectionVariables.set('fromDate', new Date(Date.now() - 30 * day).toISOString());",
+                  "pm.collectionVariables.set('toDate', new Date(Date.now() + 365 * day).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Every item has the requested status', () =>",
+                  "  pm.response.json().forEach(a => pm.expect(a.status).to.eql('Pending')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments?from={{fromDate}}&to={{toDate}}&status=Pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments"],
+              "query": [
+                { "key": "from", "value": "{{fromDate}}", "description": "ISO 8601. Appointments still running at or after this time" },
+                { "key": "to", "value": "{{toDate}}", "description": "ISO 8601. Appointments starting before this time" },
+                { "key": "status", "value": "Pending", "description": "Pending, Confirmed or Cancelled" }
+              ]
+            },
+            "description": "All three filters are optional. The pre-request script sets the range from 30 days ago to one year ahead."
+          }
+        },
+        {
+          "name": "My appointments - business owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns a list', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{ownerToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/appointments", "host": ["{{baseUrl}}"], "path": ["api", "appointments"] },
+            "description": "Appointments for services of the businesses the owner owns."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business summary",
+      "item": [
+        {
+          "name": "Business summary - owner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Revenue = upcoming count x price, per service', () => body.services.forEach(s =>",
+                  "  pm.expect(s.expectedRevenue).to.be.closeTo(s.upcomingAppointments * s.price, 0.001)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{ownerToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/businesses/{{ownedBusinessId}}/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "businesses", "{{ownedBusinessId}}", "summary"]
+            },
+            "description": "Per service: the number of upcoming (future, non-cancelled) appointments and the expected revenue (count x price)."
+          }
+        },
+        {
+          "name": "Business summary - another owner's business (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{ownerToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/businesses/{{otherOwnersBusinessId}}/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "businesses", "{{otherOwnersBusinessId}}", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Business summary - client (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('403 Forbidden', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/businesses/{{ownedBusinessId}}/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "businesses", "{{ownedBusinessId}}", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Business summary - unknown business (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{ownerToken}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/businesses/999999/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "businesses", "999999", "summary"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

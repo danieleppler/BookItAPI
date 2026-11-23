@@ -27,22 +27,29 @@ Design decisions for the BookIt API, with the reasoning behind each.
 
 ---
 
-## 3. Middlewares: request logging with correlation ID, global exception handling
+## 3. Booking: stored `EndTime`, and double-booking prevented by Postgres itself
 
-**Decision:** two custom middleware classes run first in the pipeline. `RequestLoggingMiddleware` is the outer one and `ExceptionHandlingMiddleware` sits inside it. Because the logger wraps the handler, it records the real 500 and the full duration. Both run before auth, so 401s and 403s are logged too.
+**Decision:**
+- `Appointment` has a stored `EndTime` column (`StartTime` + the service's duration), set when the appointment is booked. A check constraint enforces `EndTime > StartTime`.
+- Two non-cancelled appointments of the same service can't overlap. Postgres enforces this with an exclusion constraint, which needs the `btree_gist` extension:
+  ```sql
+  EXCLUDE USING gist ("ServiceId" WITH =, tstzrange("StartTime", "EndTime", '[)') WITH &&)
+  WHERE ("Status" <> 'Cancelled')
+  ```
+  With `[)` ranges, back-to-back slots (10:00–11:00, then 11:00–12:00) are allowed. `Pending` and `Confirmed` both hold the slot.
+- The API simply inserts. If Postgres rejects the row with an exclusion violation (`23P01`), the API returns 409.
 
-**Request logging:**
-- One structured line per request: method, path (no query string, to keep user input out of logs), status and elapsed ms.
-- **Correlation ID:** the caller's `X-Correlation-ID` is reused if it matches `^[A-Za-z0-9._-]{1,64}$`, which blocks log injection. Otherwise a new GUID is generated.
-- The ID is stored in `TraceIdentifier` and echoed in the response header through `OnStarting`, so it's also present on 500s.
+**Why:**
+- Checking for an overlap in code and then inserting has a race: two concurrent requests can both see the slot as free and both insert. The database checks the constraint atomically, so the rule holds under concurrency and for every write path (API, scripts, manual SQL).
+- `EndTime` has to be stored because the constraint can only use the row's own columns.
+- **Verified:** 10 concurrent requests for the same slot returned one 201 and nine 409s.
 
-**Exception handling:**
-- Logs the full exception and returns a generic `application/problem+json` 500 that includes `correlationId`. No exception details reach the client.
-- When the client disconnects, it logs at Information and sends no response. If the response has already started, it rethrows.
+**Alternatives:** a row lock (`SELECT … FOR UPDATE` on the service) only protects code paths that remember to take it. Serializable isolation works too, but the losing transaction needs retry logic.
 
-**Verified:** killing the test instance's DB connections returned a clean 500 with a correlation ID, and the stack trace appeared only in the server log.
-
-**Trade-off:** the console logger doesn't print scopes by default, so the ID is written into the two middleware messages explicitly.
+**Trade-offs:**
+- EF Core can't model exclusion constraints, so the constraint is raw SQL in the `AddAppointmentEndTime` migration.
+- `EndTime` is fixed at booking time, so changing a service's duration later doesn't move existing bookings. That's intended.
+- The rule is per service. A single barber who can't run two services at once would need it per business instead.
 
 ---
 

@@ -46,6 +46,10 @@ All seeded users share the password `Password123!`.
 | BusinessOwner | owner1@bookit.com … owner4@bookit.com      |
 | Client        | client1@bookit.com … client6@bookit.com    |
 
+## Postman collection
+
+Import `BookIt.postman_collection.json`. It covers every endpoint plus the main error cases (401, 403, 404, 409). Run the requests in order (or run the whole collection): the login and refresh requests save the tokens, and the other requests use them automatically. `baseUrl` defaults to `http://localhost:5094`. Login is rate-limited to 5 attempts per minute, so wait a minute between full runs.
+
 ## DI lifetimes
 
 The `DbContext` is **scoped** (the `AddDbContext` default): one instance per HTTP request, because it isn't thread-safe and its change tracker should only hold that request's entities. The services (`IAuthService`, `IBusinessService`, `IAppointmentService`) are also **scoped**, because they depend on the `DbContext`. A singleton would capture one context and share it across concurrent requests, and a transient would work but adds nothing, since the request already shares one context.
